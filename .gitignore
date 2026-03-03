@@ -3,3 +3,8 @@
 sessions/
 __pycache__/
 *.pyc
+.serena/
+*.pkl
+node_modules/
+api.key
+Modelfile*
