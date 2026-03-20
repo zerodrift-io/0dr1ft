@@ -1,0 +1,28 @@
+# ── 0dr1ft Docker Compose Override ───────────────────────────────────────────
+# Use alongside docker-compose.yml (upstream OpenClaw):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up
+#
+# This overlay renames containers to 0dr1ft-* and injects 0dr1ft env vars.
+# The upstream docker-compose.yml is not modified (stays clean for upstream merges).
+
+services:
+  openclaw-gateway:
+    container_name: 0dr1ft-gateway
+    env_file:
+      - .env.0dr1ft
+    volumes:
+      - 0dr1ft-data:/app/data
+    labels:
+      com.zerodrift.project: "0dr1ft"
+      com.zerodrift.component: "gateway"
+
+  openclaw-db:
+    container_name: 0dr1ft-db
+    labels:
+      com.zerodrift.project: "0dr1ft"
+      com.zerodrift.component: "db"
+
+volumes:
+  0dr1ft-data:
+    driver: local
