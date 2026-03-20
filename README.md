@@ -73,14 +73,30 @@ docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up -d
 
 ## Azure Deployment
 
-> Infrastructure-as-Code coming soon (Bicep templates, prefixed `0dr1ft-*`).
-> Reference: stk-engine deployment pattern.
+Pattern: **GitHub Actions + az CLI** (same as stk-engine).
 
-Resource naming convention:
-- Resource Group: `0dr1ft-rg`
-- Container Instance: `0dr1ft-gateway`
-- Storage Account: `0dr1ftstorage`
-- Key Vault: `0dr1ft-kv`
+```bash
+# 1. Provision infrastructure (ACR, Storage, Container Apps, Log Analytics)
+./infra/setup.sh
+
+# 2. Build and push image
+az acr build -r 0dr1ftacr -t 0dr1ft:latest .
+
+# 3. Deploy
+./infra/deploy-app.sh
+```
+
+| Resource | Name | Type |
+|----------|------|------|
+| Resource Group | `0dr1ft-rg` | — |
+| Container Apps Env | `0dr1ft-env` | Container Apps Environment |
+| Container Registry | `0dr1ftacr` | ACR |
+| Storage Account | `0dr1ftdata` | Storage |
+| Log Analytics | `0dr1ft-log` | Workspace |
+| Gateway App | `0dr1ft-gateway` | Container App |
+
+CI/CD: `.github/workflows/deploy.yml` — auto-deploys on push to `main`.
+See [docs/0dr1ft/SETUP.md](docs/0dr1ft/SETUP.md) for full instructions.
 
 ## Project Structure
 

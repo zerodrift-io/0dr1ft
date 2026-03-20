@@ -15,9 +15,10 @@ the open-source multi-channel AI gateway. This approach gives us:
 ```
 ┌──────────────────────────────────────────────┐
 │ Layer 3: Deployment (Azure)                   │
-│   docker-compose.0dr1ft.yml                   │
-│   infra/0dr1ft-*.bicep (planned)              │
-│   .github/workflows/deploy.yml (planned)      │
+│   infra/setup.sh — provision resources        │
+│   infra/deploy-app.sh — deploy container app  │
+│   .github/workflows/deploy.yml — CI/CD        │
+│   docker-compose.0dr1ft.yml — local Docker    │
 ├──────────────────────────────────────────────┤
 │ Layer 2: Configuration (0dr1ft)               │
 │   0dr1ft.mjs — entry point                    │
@@ -56,17 +57,18 @@ Other providers (OpenAI, Anthropic) remain available via OpenClaw's multi-provid
 
 **Context:** Production deployment targets Azure, following stk-engine patterns.
 
-**Decision:** All Azure resources prefixed with `0dr1ft-` for clear identification.
-Infrastructure defined as Bicep templates (planned).
+**Decision:** All Azure resources prefixed with `0dr1ft` (matching stk-engine pattern).
+Infrastructure provisioned via `az` CLI scripts, deployed via GitHub Actions.
 
-**Resource naming:**
-| Resource | Name |
-|----------|------|
-| Resource Group | `0dr1ft-rg` |
-| Container Instance | `0dr1ft-gateway` |
-| Storage Account | `0dr1ftstorage` |
-| Key Vault | `0dr1ft-kv` |
-| Container Registry | `0dr1ftcr` |
+**Resource naming (mirrors stk-engine):**
+| stk-engine | 0dr1ft | Type |
+|------------|--------|------|
+| `stk-engine-rg` | `0dr1ft-rg` | Resource Group |
+| `stk-engine-env` | `0dr1ft-env` | Container Apps Environment |
+| `stkengineacr` | `0dr1ftacr` | Container Registry |
+| `stkenginedata` | `0dr1ftdata` | Storage Account |
+| `workspace-stkenginerg*` | `0dr1ft-log` | Log Analytics Workspace |
+| — | `0dr1ft-gateway` | Container App |
 
 ## File Ownership
 
@@ -81,3 +83,5 @@ Infrastructure defined as Bicep templates (planned).
 | `extensions/` | OpenClaw upstream | No |
 | `skills/` | OpenClaw upstream | No |
 | `openclaw.mjs` | OpenClaw upstream | No |
+| `infra/` | ZeroDrift | Yes |
+| `.github/workflows/deploy.yml` | ZeroDrift | Yes |

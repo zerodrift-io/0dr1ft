@@ -89,13 +89,72 @@ docker logs 0dr1ft-gateway
 
 ## Azure Deployment
 
-> Bicep templates coming soon. Resource prefix: `0dr1ft-*`.
+Pattern: GitHub Actions + az CLI (same as stk-engine).
 
-Target architecture:
-- **Azure Container Instance** for the gateway
-- **Azure Storage Account** for persistent state
-- **Azure Key Vault** for secrets
-- **Azure Container Registry** for images
+### Prerequisites
+
+```bash
+# Install Azure CLI
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+# Login
+az login
+
+# Select subscription
+az account set -s <subscription-id>
+```
+
+### 1. Provision infrastructure
+
+```bash
+# Creates: resource group, ACR, storage, log analytics, container apps env
+./infra/setup.sh
+```
+
+This creates (all prefixed `0dr1ft`):
+
+| Resource | Name | Type |
+|----------|------|------|
+| Resource Group | `0dr1ft-rg` | — |
+| Container Registry | `0dr1ftacr` | ACR Basic |
+| Storage Account | `0dr1ftdata` | StorageV2 LRS |
+| Log Analytics | `0dr1ft-log` | Workspace |
+| Container Apps Env | `0dr1ft-env` | Environment |
+
+### 2. Build and push image
+
+```bash
+az acr build -r 0dr1ftacr -t 0dr1ft:latest .
+```
+
+### 3. Deploy the gateway
+
+```bash
+export OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32)
+./infra/deploy-app.sh
+```
+
+### 4. Verify
+
+```bash
+# Get the app URL
+az containerapp show -n 0dr1ft-gateway -g 0dr1ft-rg \
+  --query "properties.configuration.ingress.fqdn" -o tsv
+
+# Health check
+curl https://<fqdn>/healthz
+```
+
+### CI/CD (GitHub Actions)
+
+The workflow `.github/workflows/deploy.yml` runs on every push to `main`:
+1. Builds the Docker image via ACR
+2. Deploys to Azure Container Apps
+3. Verifies health check
+
+**Required GitHub secrets:**
+- `AZURE_CREDENTIALS` — service principal JSON (`az ad sp create-for-rbac --sdk-auth`)
+- `OPENCLAW_GATEWAY_TOKEN` — gateway authentication token
 
 ## Upstream Sync
 
