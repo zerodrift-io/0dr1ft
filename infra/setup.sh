@@ -64,15 +64,15 @@ az storage account create \
   --kind StorageV2 \
   --output none
 
-# Create file share for OpenClaw state
-echo "==> Creating file share: openclaw-state"
+# Create file share for 0dr1ft state persistence
+echo "==> Creating file share: 0dr1ftdata"
 STORAGE_KEY=$(az storage account keys list \
   --resource-group "$RESOURCE_GROUP" \
   --account-name "$STORAGE_NAME" \
   --query '[0].value' -o tsv)
 
 az storage share create \
-  --name "openclaw-state" \
+  --name "0dr1ftdata" \
   --account-name "$STORAGE_NAME" \
   --account-key "$STORAGE_KEY" \
   --quota 5 \
