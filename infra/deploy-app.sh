@@ -54,10 +54,10 @@ echo "==> Configuring storage mount"
 az containerapp env storage set \
   --resource-group "$RESOURCE_GROUP" \
   --name "$CONTAINER_ENV" \
-  --storage-name "openclawstate" \
+  --storage-name "0dr1ftfiles" \
   --azure-file-account-name "$STORAGE_NAME" \
   --azure-file-account-key "$STORAGE_KEY" \
-  --azure-file-share-name "openclaw-state" \
+  --azure-file-share-name "0dr1ftdata" \
   --access-mode ReadWrite \
   --output none 2>/dev/null || true
 
