@@ -1,0 +1,25 @@
+# 0dr1ft — ZeroDrift AI Automation
+# Docker Compose overlay for 0dr1ft deployment.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up -d
+
+services:
+  openclaw-gateway:
+    container_name: 0dr1ft-gateway
+    labels:
+      app: 0dr1ft
+      org: zerodrift-io
+    environment:
+      OPENCLAW_GATEWAY_MODE: local
+    restart: unless-stopped
+
+  openclaw-cli:
+    container_name: 0dr1ft-cli
+    labels:
+      app: 0dr1ft
+      org: zerodrift-io
+
+  ollama:
+    container_name: 0dr1ft-ollama
+    labels:
+      app: 0dr1ft
+      org: zerodrift-io

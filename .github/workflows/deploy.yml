@@ -1,0 +1,149 @@
+# 0dr1ft — Azure Container Apps Deployment
+# Pattern: GitHub Actions + az CLI (same as stk-engine)
+#
+# Resources (prefix: 0dr1ft):
+#   - 0dr1ft-rg               Resource Group
+#   - 0dr1ftacr               Container Registry
+#   - 0dr1ftdata              Storage Account
+#   - 0dr1ft-log              Log Analytics Workspace
+#   - 0dr1ft-env              Container Apps Environment
+#   - 0dr1ft-gateway          Container App
+#
+# Required secrets:
+#   AZURE_CREDENTIALS         Service principal JSON (az ad sp create-for-rbac)
+#   OPENCLAW_GATEWAY_TOKEN    Gateway auth token
+
+name: Deploy 0dr1ft
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (default: latest)'
+        required: false
+        default: 'latest'
+
+env:
+  PREFIX: 0dr1ft
+  RESOURCE_GROUP: 0dr1ft-rg
+  ACR_NAME: 0dr1ftacr
+  CONTAINER_ENV: 0dr1ft-env
+  APP_NAME: 0dr1ft-gateway
+  AZURE_LOCATION: francecentral
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure infrastructure exists
+        run: |
+          # Create resource group if missing
+          az group create \
+            --name ${{ env.RESOURCE_GROUP }} \
+            --location ${{ env.AZURE_LOCATION }} \
+            --output none
+
+          # Create ACR if missing
+          az acr show -n ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} 2>/dev/null || \
+          az acr create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.ACR_NAME }} \
+            --sku Basic \
+            --admin-enabled true \
+            --output none
+
+      - name: Build and push image to ACR
+        run: |
+          IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "${{ env.PREFIX }}:${IMAGE_TAG}" \
+            --image "${{ env.PREFIX }}:${{ github.sha }}" \
+            .
+
+      - name: Deploy to Container Apps
+        run: |
+          IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          ACR_SERVER="${{ env.ACR_NAME }}.azurecr.io"
+          IMAGE="${ACR_SERVER}/${{ env.PREFIX }}:${IMAGE_TAG}"
+
+          ACR_USERNAME=$(az acr credential show -n ${{ env.ACR_NAME }} --query username -o tsv)
+          ACR_PASSWORD=$(az acr credential show -n ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+
+          # Create or update the container app
+          if az containerapp show -n ${{ env.APP_NAME }} -g ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Updating existing container app..."
+            az containerapp update \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --name ${{ env.APP_NAME }} \
+              --image "$IMAGE" \
+              --output none
+          else
+            echo "Creating new container app..."
+
+            # Ensure Container Apps environment exists
+            az containerapp env show \
+              -n ${{ env.CONTAINER_ENV }} \
+              -g ${{ env.RESOURCE_GROUP }} &>/dev/null || \
+            bash infra/setup.sh
+
+            az containerapp create \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --name ${{ env.APP_NAME }} \
+              --environment ${{ env.CONTAINER_ENV }} \
+              --image "$IMAGE" \
+              --registry-server "$ACR_SERVER" \
+              --registry-username "$ACR_USERNAME" \
+              --registry-password "$ACR_PASSWORD" \
+              --target-port 18789 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 1 \
+              --cpu 1 \
+              --memory 2Gi \
+              --env-vars \
+                "OPENCLAW_GATEWAY_TOKEN=secretref:gateway-token" \
+                "OPENCLAW_GATEWAY_MODE=local" \
+                "HOME=/home/node" \
+                "TERM=xterm-256color" \
+              --secrets "gateway-token=${{ secrets.OPENCLAW_GATEWAY_TOKEN }}" \
+              --command "node" "dist/index.js" "gateway" "--bind" "lan" "--port" "18789" "--allow-unconfigured" \
+              --output none
+          fi
+
+      - name: Verify deployment
+        run: |
+          FQDN=$(az containerapp show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.APP_NAME }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          echo "App URL: https://${FQDN}"
+          echo "Health:  https://${FQDN}/healthz"
+
+          # Wait for health check
+          for i in 1 2 3 4 5; do
+            if curl -sf "https://${FQDN}/healthz" >/dev/null 2>&1; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Waiting for app to start... (attempt $i/5)"
+            sleep 10
+          done
+          echo "Warning: health check did not pass within 50s"
