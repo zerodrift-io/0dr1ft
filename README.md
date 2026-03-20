@@ -1,144 +1,95 @@
-# 0dr1ft — ZeroDrift AI Automation
+# 0dr1ft
 
-> Zero Error. Zero Drift. Built on [OpenClaw](https://github.com/openclaw/openclaw).
+> ZeroDrift's AI gateway — multi-channel, self-hosted, zero vendor lock-in.
 
-**0dr1ft** is ZeroDrift's AI automation platform — a custom layer on top of OpenClaw
-that powers autonomous agent crews for specialized tasks.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│                  0dr1ft                      │
-│  ┌───────────┐  ┌──────────┐  ┌───────────┐ │
-│  │ Telegram  │  │ Discord  │  │  M365     │ │
-│  │ Channel   │  │ Channel  │  │  Graph    │ │
-│  └─────┬─────┘  └────┬─────┘  └─────┬─────┘ │
-│        └──────┬──────┘──────────────┘        │
-│         ┌─────▼──────┐                       │
-│         │  OpenClaw   │  (upstream engine)    │
-│         │  Gateway    │                       │
-│         └─────┬──────┘                       │
-│         ┌─────▼──────┐                       │
-│         │ Groq Llama │  (default provider)   │
-│         │   3.3 70B  │                       │
-│         └────────────┘                       │
-└─────────────────────────────────────────────┘
-```
-
-## Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Engine | [OpenClaw](https://github.com/openclaw/openclaw) (upstream, unmodified) |
-| Default LLM | Groq Llama 3.3 70B |
-| Runtime | Node.js 22+, Docker |
-| Channels | Telegram, Discord, M365 Graph API |
-| Infra | Azure (prefixed `0dr1ft-*`) |
+Built on [OpenClaw](https://github.com/openclaw/openclaw) (upstream). The `0dr1ft` layer adds ZeroDrift-specific config, Azure deployment, and identity — without modifying upstream source code.
 
 ## Quick Start
 
 ```bash
-# 1. Clone
-git clone https://github.com/zerodrift-io/cave-bot.git 0dr1ft
-cd 0dr1ft
+# Install deps
+pnpm install
 
-# 2. Configure
+# Configure
 cp .env.0dr1ft.example .env.0dr1ft
 # Edit .env.0dr1ft with your API keys
 
-# 3. Install & build
-pnpm install
-pnpm build
-
-# 4. Run
-node 0dr1ft.mjs onboard
-# or via Docker:
-docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up -d
+# Run
+node 0dr1ft.mjs
+# or: pnpm 0dr1ft
 ```
 
-## Docker Deployment
+## Docker
 
 ```bash
-# Build the image
-docker build -t 0dr1ft:local .
-
-# Run with 0dr1ft overlay
-OPENCLAW_IMAGE=0dr1ft:local \
-OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32) \
-OPENCLAW_CONFIG_DIR=~/.openclaw \
-OPENCLAW_WORKSPACE_DIR=~/.openclaw/workspace \
-docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up
 ```
+
+Containers are named `0dr1ft-gateway` and `0dr1ft-db`.
 
 ## Azure Deployment
 
-Pattern: **GitHub Actions + az CLI** (same as stk-engine).
+### First deploy (provision infra + app)
 
 ```bash
-# 1. Provision infrastructure (ACR, Storage, Container Apps, Log Analytics)
-./infra/setup.sh
-
-# 2. Build and push image
-az acr build -r 0dr1ftacr -t 0dr1ft:latest .
-
-# 3. Deploy
-./infra/deploy-app.sh
+az login
+export OPENCLAW_GATEWAY_TOKEN=<your-token>
+chmod +x infra/azure/deploy.sh
+./infra/azure/deploy.sh
 ```
 
+Provisions:
 | Resource | Name | Type |
-|----------|------|------|
-| Resource Group | `0dr1ft-rg` | — |
-| Container Apps Env | `0dr1ft-env` | Container Apps Environment |
-| Container Registry | `0dr1ftacr` | ACR |
-| Storage Account | `0dr1ftdata` | Storage |
+|---|---|---|
+| Resource Group | `0dr1ft-rg` | - |
+| Container Registry | `0dr1ftacr` | Basic ACR |
+| Storage Account | `0dr1ftdata` | Standard_LRS |
+| File Share | `0dr1ftdata` | Azure Files |
 | Log Analytics | `0dr1ft-log` | Workspace |
-| Gateway App | `0dr1ft-gateway` | Container App |
+| Container Apps Env | `0dr1ft-env` | - |
+| Container App | `0dr1ft` | 0.5 vCPU / 1 Gi |
 
-CI/CD: `.github/workflows/deploy.yml` — auto-deploys on push to `main`.
-See [docs/0dr1ft/SETUP.md](docs/0dr1ft/SETUP.md) for full instructions.
+### CI/CD (automatic on push to main)
 
-## Project Structure
+The workflow `.github/workflows/deploy-azure.yml` triggers on every push to `main`/`master` that touches app or infra files.
+
+**Required GitHub secrets:**
+- `AZURE_CREDENTIALS` — Service principal JSON (`az ad sp create-for-rbac`)
+- `OPENCLAW_GATEWAY_TOKEN` — Gateway API token
+
+### Pattern
+
+Mirrors `zerodrift-io/stk-engine` exactly:
+- ACR build → Container App update → health check
+- Azure Files volume at `/app/data` for persistence across restarts
+
+## Architecture
 
 ```
-.
-├── 0dr1ft.mjs                 # 0dr1ft entry point (wraps openclaw.mjs)
-├── .env.0dr1ft.example         # 0dr1ft-specific environment template
-├── docker-compose.0dr1ft.yml   # Docker overlay for 0dr1ft deployment
-├── docs/                       # Documentation
-│   └── 0dr1ft/                 # 0dr1ft-specific docs
-│       ├── ARCHITECTURE.md     # Architecture decisions
-│       └── SETUP.md            # Setup guide
-├── openclaw.mjs                # OpenClaw entry point (upstream)
-├── src/                        # OpenClaw source (upstream, unmodified)
-├── extensions/                 # OpenClaw extensions (upstream)
-└── skills/                     # OpenClaw skills (upstream)
+0dr1ft.mjs          ← ZeroDrift entry point (loads .env.0dr1ft)
+openclaw.mjs        ← Upstream OpenClaw entry point (unchanged)
+src/                ← Upstream source (unchanged)
+extensions/         ← Upstream extensions (unchanged)
+infra/azure/        ← ZeroDrift Azure deployment
+  deploy.sh         ← Provision + deploy script
+.github/workflows/
+  deploy-azure.yml  ← CI/CD pipeline
+docs/0dr1ft/        ← ZeroDrift documentation
 ```
 
-## Upstream Sync
+**Principle:** upstream files are never modified. ZeroDrift changes live in dedicated files. Merges from upstream remain conflict-free.
 
-0dr1ft is a rebrand layer — the OpenClaw core (`src/`, `extensions/`, `skills/`) stays
-unmodified. To pull upstream updates:
+## Updating from Upstream
 
 ```bash
 git remote add upstream https://github.com/openclaw/openclaw.git
 git fetch upstream
 git merge upstream/main
+# Resolve only if upstream touches our files (0dr1ft.mjs, infra/, docs/0dr1ft/)
 ```
 
-The 0dr1ft layer (`0dr1ft.mjs`, `docker-compose.0dr1ft.yml`, `.env.0dr1ft.*`, `docs/0dr1ft/`)
-is isolated from upstream, so merges should be conflict-free.
+## Docs
 
-## Contributing
-
-- GitHub is the source of truth
-- All changes documented via issues and PRs
-- Follow [OpenClaw contribution guidelines](CONTRIBUTING.md) for core changes
-
-## License
-
-MIT — see [LICENSE](LICENSE)
-
----
-
-**ZeroDrift** — Paris, France | [zerodrift-io](https://github.com/zerodrift-io)
+- [Architecture](docs/0dr1ft/ARCHITECTURE.md)
+- [Setup & Deployment](docs/0dr1ft/SETUP.md)
+- [OpenClaw docs](https://docs.openclaw.ai)

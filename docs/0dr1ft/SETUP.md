@@ -1,184 +1,140 @@
-# 0dr1ft — Setup Guide
+# 0dr1ft — Setup & Deployment Guide
 
 ## Prerequisites
 
-- Node.js 22+
-- pnpm 10+
-- Docker (for containerized deployment)
-- Azure CLI (for Azure deployment, optional)
+- Node 22+, pnpm, git
+- Azure CLI (`az`) — for cloud deployment
+- Docker — for local container testing
 
 ## Local Development
 
-### 1. Clone the repository
-
 ```bash
-git clone https://github.com/zerodrift-io/cave-bot.git 0dr1ft
-cd 0dr1ft
-```
+# 1. Clone
+git clone https://github.com/zerodrift-io/cave-bot.git
+cd cave-bot
 
-### 2. Install dependencies
-
-```bash
+# 2. Install deps
 pnpm install
-```
 
-### 3. Build
-
-```bash
-pnpm build
-```
-
-### 4. Configure
-
-```bash
+# 3. Configure
 cp .env.0dr1ft.example .env.0dr1ft
+# Fill in at minimum: GROQ_API_KEY or ANTHROPIC_API_KEY
+
+# 4. Run
+node 0dr1ft.mjs
 ```
 
-Edit `.env.0dr1ft` and set at minimum:
-- `OPENCLAW_GATEWAY_TOKEN` — random token for gateway auth
-- One AI provider key (e.g., `GROQ_API_KEY`, `OPENAI_API_KEY`)
+The `0dr1ft.mjs` entry point loads `.env.0dr1ft` (non-overriding — shell env vars win), then starts the OpenClaw gateway.
 
-### 5. Run the onboarding wizard
+## Docker (local)
 
 ```bash
-node 0dr1ft.mjs onboard
+# Build + start with 0dr1ft overlay
+docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up --build
+
+# Containers:
+#   0dr1ft-gateway   (gateway process)
+#   0dr1ft-db        (database, if applicable)
 ```
 
-This walks you through channel setup (Telegram, Discord, etc.).
+## Azure — First Deploy
 
-### 6. Start the gateway
-
-```bash
-node 0dr1ft.mjs gateway run
-```
-
-## Docker Deployment
-
-### Build
+Run once to provision all Azure resources.
 
 ```bash
-docker build -t 0dr1ft:local .
-```
-
-### Run
-
-```bash
-cp .env.0dr1ft.example .env.0dr1ft
-# Edit .env.0dr1ft with your values
-
-export OPENCLAW_IMAGE=0dr1ft:local
-export OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32)
-export OPENCLAW_CONFIG_DIR=~/.openclaw
-export OPENCLAW_WORKSPACE_DIR=~/.openclaw/workspace
-
-docker compose -f docker-compose.yml -f docker-compose.0dr1ft.yml up -d
-```
-
-### Verify
-
-```bash
-# Check containers
-docker ps --filter label=app=0dr1ft
-
-# Health check
-curl http://localhost:18789/healthz
-
-# Logs
-docker logs 0dr1ft-gateway
-```
-
-## Azure Deployment
-
-Pattern: GitHub Actions + az CLI (same as stk-engine).
-
-### Prerequisites
-
-```bash
-# Install Azure CLI
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
 # Login
 az login
 
-# Select subscription
-az account set -s <subscription-id>
+# Required
+export OPENCLAW_GATEWAY_TOKEN=<random-secret>
+
+# Optional overrides (defaults shown)
+export DRIFT_RG=0dr1ft-rg
+export DRIFT_LOCATION=westeurope
+export DRIFT_ACR=0dr1ftacr
+export DRIFT_APP=0dr1ft
+export DRIFT_ENV=0dr1ft-env
+export DRIFT_STORAGE=0dr1ftdata
+
+chmod +x infra/azure/deploy.sh
+./infra/azure/deploy.sh
 ```
 
-### 1. Provision infrastructure
+This provisions (in order):
+1. Resource Group `0dr1ft-rg`
+2. Container Registry `0dr1ftacr` (Basic, admin enabled)
+3. Docker build + push via ACR Tasks
+4. Storage Account `0dr1ftdata` + File Share `0dr1ftdata`
+5. Log Analytics Workspace `0dr1ft-log`
+6. Container Apps Environment `0dr1ft-env`
+7. Container App `0dr1ft` (0.5 vCPU / 1 Gi, scale-to-zero)
+8. Azure Files volume mounted at `/app/data`
+
+## Azure — CI/CD Setup
+
+After the first deploy, subsequent deploys run automatically via GitHub Actions.
+
+### 1. Create Service Principal
 
 ```bash
-# Creates: resource group, ACR, storage, log analytics, container apps env
-./infra/setup.sh
+# Get your subscription ID
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+az ad sp create-for-rbac \
+  --name "0dr1ft-github-actions" \
+  --role Contributor \
+  --scopes /subscriptions/$SUBSCRIPTION_ID/resourceGroups/0dr1ft-rg \
+  --sdk-auth
 ```
 
-This creates (all prefixed `0dr1ft`):
+Copy the JSON output.
 
-| Resource | Name | Type |
-|----------|------|------|
-| Resource Group | `0dr1ft-rg` | — |
-| Container Registry | `0dr1ftacr` | ACR Basic |
-| Storage Account | `0dr1ftdata` | StorageV2 LRS |
-| Log Analytics | `0dr1ft-log` | Workspace |
-| Container Apps Env | `0dr1ft-env` | Environment |
+### 2. Add GitHub Secrets
 
-### 2. Build and push image
+In `Settings > Secrets and variables > Actions`:
 
-```bash
-az acr build -r 0dr1ftacr -t 0dr1ft:latest .
-```
+| Secret | Value |
+|---|---|
+| `AZURE_CREDENTIALS` | JSON from step 1 |
+| `OPENCLAW_GATEWAY_TOKEN` | Your gateway token |
 
-### 3. Deploy the gateway
+### 3. Push to main
 
-```bash
-export OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32)
-./infra/deploy-app.sh
-```
+The workflow `.github/workflows/deploy-azure.yml` triggers automatically on push to `main`/`master` when app or infra files change.
 
-### 4. Verify
+Pipeline: CI checks → ACR build → Container App update → health check
+
+## Updating from OpenClaw Upstream
 
 ```bash
-# Get the app URL
-az containerapp show -n 0dr1ft-gateway -g 0dr1ft-rg \
-  --query "properties.configuration.ingress.fqdn" -o tsv
-
-# Health check
-curl https://<fqdn>/healthz
-```
-
-### CI/CD (GitHub Actions)
-
-The workflow `.github/workflows/deploy.yml` runs on every push to `main`:
-1. Builds the Docker image via ACR
-2. Deploys to Azure Container Apps
-3. Verifies health check
-
-**Required GitHub secrets:**
-- `AZURE_CREDENTIALS` — service principal JSON (`az ad sp create-for-rbac --sdk-auth`)
-- `OPENCLAW_GATEWAY_TOKEN` — gateway authentication token
-
-## Upstream Sync
-
-To pull updates from OpenClaw:
-
-```bash
-# Add upstream (first time only)
+# Add upstream remote (once)
 git remote add upstream https://github.com/openclaw/openclaw.git
 
-# Fetch and merge
+# Merge upstream changes
 git fetch upstream
 git merge upstream/main
+
+# Push (conflicts are rare — only if upstream touches 0dr1ft-owned files)
+git push
 ```
 
-The 0dr1ft layer files are isolated, so merges should be conflict-free.
+## Troubleshooting
 
-## Channels
+**Gateway not starting:**
+```bash
+# Check logs
+az containerapp logs show --name 0dr1ft --resource-group 0dr1ft-rg --follow
+```
 
-Configure channels via the onboarding wizard or directly in `~/.openclaw/openclaw.json`:
+**Health check:**
+```bash
+FQDN=$(az containerapp show --name 0dr1ft --resource-group 0dr1ft-rg --query "properties.configuration.ingress.fqdn" -o tsv)
+curl https://$FQDN/api/health
+```
 
-| Channel | Setup |
-|---------|-------|
-| Telegram | `TELEGRAM_BOT_TOKEN` in `.env.0dr1ft` |
-| Discord | `DISCORD_BOT_TOKEN` in `.env.0dr1ft` |
-| M365 Teams | Via `extensions/msteams` |
-
-See [OpenClaw channel docs](https://docs.openclaw.ai/channels) for full list.
+**Re-deploy without reprovisioning:**
+```bash
+az acr build --registry 0dr1ftacr --image 0dr1ft:latest --file Dockerfile .
+az containerapp update --name 0dr1ft --resource-group 0dr1ft-rg \
+  --image 0dr1ftacr.azurecr.io/0dr1ft:latest
+```
